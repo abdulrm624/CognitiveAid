@@ -359,19 +359,27 @@ Generated object shapes are stored automatically inside a local `shapes/` direct
 ```text
 CognitiveAid/
 │
-├── btp1.py
+├── __pycache__/
+│
 ├── shapes/
 │   ├── shape_1.png
 │   ├── shape_2.png
 │   └── ...
 │
+├── web/
+│   └── (Web-based UI implementation and frontend work)
+│
+├── CognitiveAid.pdf
+│
 ├── README.md
+│
+├── btp1.py
+│
 ├── full.jpeg
 ├── normal.jpeg
 ├── objects.jpeg
 └── results.jpeg
 ```
-
 ---
 
 # Technologies Used
