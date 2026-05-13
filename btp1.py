@@ -18,7 +18,6 @@ from matplotlib.figure import Figure
 APP_TITLE = "Cognitive Aid"
 DATA_FILE = os.path.join(os.path.expanduser("~"), "Downloads", "memory_game_player_data.json")
 LAPSE_THRESHOLD_MS = 8000
-LAPSE_MAX_DURATION_MS = 60000
 GAME_DURATION_MS = 4 * 60 * 1000
 WINDOW_WIDTH = 1400
 WINDOW_HEIGHT = 1000
@@ -37,8 +36,8 @@ GAME_MODES = {
     "reverse_rot90":  "Reversal + Rotation 90°",
     "reverse_rot180": "Reversal + Rotation 180°",
     "letter_assoc":   "Letter Association",
-    "letter_reverse": "Letter + Reversal",
-    "mixed":          "Mixed (changes each level)",
+    "letter_reverse": "Letter Reversal",
+    "mixed":          "Mixed (Changes Each Level)",
 }
 
 # Pool of modes the "mixed" mode cycles through
@@ -159,20 +158,22 @@ class MemoryGameApp:
         self.stars = 0
         self.lives = 3
         self.best_score = 0
-        self.message_text = tk.StringVar(value="Enter player details, choose a game type, and click Start Game.")
+        self.message_text = tk.StringVar(value="Enter player details, choose a category and game type, then click Start Game.")
         self.timer_text = tk.StringVar(value="")
         self.reduced_distraction = tk.BooleanVar(value=True)
         self.player_name_var = tk.StringVar()
         self.player_age_var = tk.StringVar()
         self.game_mode_var = tk.StringVar(value="normal")
         self.game_category_var = tk.StringVar(value="numbers")
+        self.game_mode_display_var = tk.StringVar(value=GAME_MODES["normal"])
+        self.category_display_var = tk.StringVar(value=GAME_CATEGORIES["numbers"])
 
         # Progression system
         self.consecutive_correct = 0
         self.recovery_mode = False
         self.recovery_target_level = 0  # Level player fell from
 
-        # Grid expansion (numbers mode only)
+        # Grid expansion (Grid category only)
         self.grid_tier_index = 0
         self.grid_size = GRID_TIERS[0]  # 3 = 3x3
         self.levels_completed_in_tier = 0
@@ -222,12 +223,16 @@ class MemoryGameApp:
         self.stars_var = tk.StringVar(value="0")
         self.lives_var = tk.StringVar(value="❤ ❤ ❤")
         self.current_player_var = tk.StringVar(value="No player selected")
-        self.session_accuracy_var = tk.StringVar(value="0%")
+        self.all_time_sessions_var = tk.StringVar(value="0")
+        self.all_time_rounds_var = tk.StringVar(value="0")
         self.lifetime_accuracy_var = tk.StringVar(value="0%")
+        self.all_time_best_score_var = tk.StringVar(value="0")
         self.avg_response_var = tk.StringVar(value="0.0s")
         self.lapse_count_var = tk.StringVar(value="0")
         self.lapse_total_var = tk.StringVar(value="0.0s")
         self.avg_lapse_var = tk.StringVar(value="0.0s")
+        self.progress_index_var = tk.StringVar(value="N/A")
+        self.post_game_summary_var = tk.StringVar(value="")
         self.current_mode_display_var = tk.StringVar(value=GAME_MODES["normal"])
         self.current_submode_var = tk.StringVar(value="")
         self.feedback_var = tk.StringVar(value="")
@@ -274,7 +279,7 @@ class MemoryGameApp:
         ttk.Label(title_frame, text=APP_TITLE, style="Title.TLabel").pack(anchor="center")
         ttk.Label(
             title_frame,
-            text="Choose one of four working-memory game modes. The game runs for 4 minutes.",
+            text="Choose a working-memory category and game type. Each session runs for 4 minutes.",
             style="Subtitle.TLabel",
         ).pack(anchor="center", pady=(5, 0))
 
@@ -282,7 +287,7 @@ class MemoryGameApp:
         player_card.pack(fill="x", pady=(0, 12))
         tk.Label(
             player_card,
-            text="Player details",
+            text="Player Details",
             font=("Arial", 14, "bold"),
             bg="#ffffff",
             fg="#243447"
@@ -312,20 +317,20 @@ class MemoryGameApp:
         tk.Label(cat_col, text="Category", font=("Arial", 10, "bold"), bg="#ffffff", fg="#243447").pack(anchor="w")
         cat_menu = ttk.OptionMenu(
             cat_col,
-            self.game_category_var,
-            "numbers",
-            *GAME_CATEGORIES.keys(),
-            command=self.on_category_change,
+            self.category_display_var,
+            GAME_CATEGORIES["numbers"],
+            *GAME_CATEGORIES.values(),
+            command=self.on_category_menu_change,
         )
         cat_menu.pack(fill="x", pady=(4, 0), ipady=2)
 
-        tk.Label(mode_col, text="Game type", font=("Arial", 10, "bold"), bg="#ffffff", fg="#243447").pack(anchor="w")
+        tk.Label(mode_col, text="Game Type", font=("Arial", 10, "bold"), bg="#ffffff", fg="#243447").pack(anchor="w")
         self.mode_menu = ttk.OptionMenu(
             mode_col,
-            self.game_mode_var,
-            "normal",
-            *GAME_MODES.keys(),
-            command=self.on_mode_change,
+            self.game_mode_display_var,
+            GAME_MODES["normal"],
+            *GAME_MODES.values(),
+            command=self.on_mode_menu_change,
         )
         self.mode_menu.pack(fill="x", pady=(4, 0), ipady=2)
 
@@ -361,6 +366,15 @@ class MemoryGameApp:
         gs_inner = tk.Frame(self.game_status_card, bg="#ffffff")
         gs_inner.pack(fill="x", padx=12, pady=(0, 12))
         tk.Label(gs_inner, textvariable=self.current_submode_var, font=("Arial", 11, "bold"), bg="#ffffff", fg="#0056b3", justify="left").pack(anchor="w", pady=(0, 4))
+        tk.Label(
+            gs_inner,
+            textvariable=self.post_game_summary_var,
+            font=("Arial", 10),
+            bg="#ffffff",
+            fg="#36485c",
+            justify="left",
+            wraplength=740,
+        ).pack(anchor="w")
 
         game_card = tk.Frame(left, bg="#ffffff", bd=1, relief="solid")
         game_card.pack(fill="x", pady=(0, 12))
@@ -373,7 +387,7 @@ class MemoryGameApp:
 
         progress_frame = tk.Frame(game_card, bg="#ffffff")
         progress_frame.pack(fill="x", padx=16)
-        tk.Label(progress_frame, text="Level progress", font=("Arial", 10), bg="#ffffff", fg="#4b5d73").pack(anchor="w")
+        tk.Label(progress_frame, text="Level Progress", font=("Arial", 10), bg="#ffffff", fg="#4b5d73").pack(anchor="w")
         ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100).pack(fill="x", pady=(4, 10))
 
         self.grid_frame = tk.Canvas(game_card, bg="#ffffff", highlightthickness=0)
@@ -435,10 +449,27 @@ class MemoryGameApp:
         left_canvas.bind_all("<Button-4>", _on_mousewheel_btn4)
         left_canvas.bind_all("<Button-5>", _on_mousewheel_btn5)
 
+    def on_mode_menu_change(self, label: str) -> None:
+        mode_lookup = {value: key for key, value in GAME_MODES.items()}
+        self.game_mode_var.set(mode_lookup.get(label, "normal"))
+        self.on_mode_change()
+
+    def on_category_menu_change(self, label: str) -> None:
+        category_lookup = {value: key for key, value in GAME_CATEGORIES.items()}
+        self.game_category_var.set(category_lookup.get(label, "numbers"))
+        self.on_category_change()
+
+    def set_mode_selection(self, mode_key: str) -> None:
+        self.game_mode_var.set(mode_key)
+        self.game_mode_display_var.set(GAME_MODES.get(mode_key, mode_key.title()))
+        self.on_mode_change()
+
     def on_mode_change(self, _value=None) -> None:
         mode_key = self.game_mode_var.get()
         cat_key = self.game_category_var.get()
         cat_label = GAME_CATEGORIES.get(cat_key, cat_key)
+        self.game_mode_display_var.set(GAME_MODES.get(mode_key, mode_key.title()))
+        self.category_display_var.set(cat_label)
         self.current_mode_display_var.set(
             f"Current: {cat_label} — {GAME_MODES.get(mode_key, mode_key)}"
         )
@@ -452,11 +483,12 @@ class MemoryGameApp:
             allowed_modes = {"normal": "Normal", "reverse": "Mental Reversal"}
             if self.game_mode_var.get() not in allowed_modes:
                 self.game_mode_var.set("normal")
+                self.game_mode_display_var.set(GAME_MODES["normal"])
         else:
             allowed_modes = GAME_MODES
             
         for key, label in allowed_modes.items():
-            menu.add_command(label=label, command=lambda k=key: (self.game_mode_var.set(k), self.on_mode_change()))
+            menu.add_command(label=label, command=lambda k=key: self.set_mode_selection(k))
             
         self.update_button_faces()
         self.on_mode_change()
@@ -466,7 +498,7 @@ class MemoryGameApp:
             self.blank_img = ImageTk.PhotoImage(Image.new("RGBA", (1, 1), (255, 255, 255, 0)))
 
     def update_button_faces(self) -> None:
-        """Update button text/font based on current category (numbers vs objects)."""
+        """Update button text/font based on current category (Grid vs Objects)."""
         cat = self.game_category_var.get()
         total_cells = self.grid_size ** 2
         for number in range(1, total_cells + 1):
@@ -478,7 +510,7 @@ class MemoryGameApp:
                 if number in self.shape_photo_images:
                     btn.configure(text="", image=self.shape_photo_images[number], width=0, height=0, compound="none")
             else:
-                # Numbers mode: blank boxes (no numbers shown)
+                # Grid category: blank cells.
                 self._load_blank_image()
                 btn.configure(text="", font=("Arial", 22, "bold"), image=self.blank_img, compound="center", width=120, height=120)
 
@@ -753,7 +785,7 @@ class MemoryGameApp:
         self.update_button_faces()
 
     def expand_grid_tier(self) -> None:
-        """Expand the grid to the next tier (3x3 -> 4x4 -> 5x5). Numbers mode only."""
+        """Expand the grid to the next tier (3x3 -> 4x4 -> 5x5). Grid category only."""
         if self.grid_tier_index >= len(GRID_TIERS) - 1:
             return  # Already at max tier
         self.grid_tier_index += 1
@@ -801,30 +833,27 @@ class MemoryGameApp:
         return frame
 
     def build_side_panel(self, right: tk.Frame) -> None:
-        how_to = self.make_card(right, "How to play")
+        how_to = self.make_card(right, "How to Play")
         self.pack_bullet(how_to, "1. Choose Grid or Objects category.")
         self.pack_bullet(how_to, "2. Choose a game type before starting.")
         self.pack_bullet(how_to, "3. Watch items light up one by one.")
         self.pack_bullet(how_to, "4. Normal: repeat same order.")
         self.pack_bullet(how_to, "5. Mental Reversal: answer in reverse order.")
-        self.pack_bullet(how_to, "6. Rotation 90°/180°: grid rotates before input.")
-        self.pack_bullet(how_to, "7. Letter Assoc: click box then type its letter.")
-        self.pack_bullet(how_to, "8. Mixed: mode changes each level.")
+        self.pack_bullet(how_to, "6. Grid Rotation 90°/180°: grid rotates before input.")
+        self.pack_bullet(how_to, "7. Letter Association: click a cell, then type its letter.")
+        self.pack_bullet(how_to, "8. Mixed: game type changes each level.")
         self.pack_bullet(how_to, "9. Get 5 correct in a row to level up.")
         self.pack_bullet(how_to, "10. Grid: grid grows after 5 levels.")
         self.pack_bullet(how_to, "11. Session lasts 4 minutes.")
 
-        rewards = self.make_card(right, "Rewards")
-        self.make_info_row(rewards, "Stars earned", self.stars_var)
-        self.make_info_row(rewards, "Lives left", self.lives_var)
-
-        data_card = self.make_card(right, "Player data")
-        self.make_info_row(data_card, "Session accuracy", self.session_accuracy_var)
-        self.make_info_row(data_card, "Lifetime accuracy", self.lifetime_accuracy_var)
-        self.make_info_row(data_card, "Average response", self.avg_response_var)
-        self.make_info_row(data_card, "Lapses this session", self.lapse_count_var)
-        self.make_info_row(data_card, "Total lapse duration", self.lapse_total_var)
-        self.make_info_row(data_card, "Average lapse duration", self.avg_lapse_var)
+        data_card = self.make_card(right, "Player Data")
+        self.make_info_row(data_card, "Sessions Played", self.all_time_sessions_var)
+        self.make_info_row(data_card, "Total Rounds", self.all_time_rounds_var)
+        self.make_info_row(data_card, "Overall Accuracy", self.lifetime_accuracy_var)
+        self.make_info_row(data_card, "Best Score", self.all_time_best_score_var)
+        self.make_info_row(data_card, "Lifetime Avg Response", self.avg_response_var)
+        self.make_info_row(data_card, "Total Lapse Time", self.lapse_total_var)
+        self.make_info_row(data_card, "All-Time Progress Index", self.progress_index_var)
         tk.Label(
             data_card,
             text=f"Player data is stored permanently in\n{DATA_FILE}",
@@ -906,20 +935,57 @@ class MemoryGameApp:
             "lifetime": {
                 "rounds_played": 0,
                 "rounds_correct": 0,
+                "total_game_duration_ms": 0,
                 "total_response_time_ms": 0,
                 "average_response_time_ms": 0,
                 "total_lapse_count": 0,
                 "total_lapse_duration_ms": 0,
                 "average_lapse_duration_ms": 0,
                 "longest_lapse_ms": 0,
+                "progress_index_ms": None,
                 "sessions_played": 0,
                 "best_score": 0,
             },
             "sessions": [],
+            "mode_progress": {},
         }
 
     def normalize_player_key(self, name: str, age: str) -> str:
         return f"{name.strip().lower()}__{age.strip()}"
+
+    def mode_progress_key(self, category_key: str, mode_key: str) -> str:
+        return f"{category_key}:{mode_key}"
+
+    def get_saved_mode_progress(self, player: Dict[str, object], category_key: str, mode_key: str) -> Dict[str, int]:
+        progress = player.get("mode_progress", {})
+        if not isinstance(progress, dict):
+            return {}
+        saved = progress.get(self.mode_progress_key(category_key, mode_key), {})
+        return saved if isinstance(saved, dict) else {}
+
+    def apply_saved_mode_progress(self, player: Dict[str, object], category_key: str, mode_key: str) -> None:
+        saved = self.get_saved_mode_progress(player, category_key, mode_key)
+        self.level_index = max(1, min(int(saved.get("level_index", 1)), len(LEVELS) - 1))
+        self.grid_tier_index = max(0, min(int(saved.get("grid_tier_index", 0)), len(GRID_TIERS) - 1))
+        self.grid_size = GRID_TIERS[self.grid_tier_index]
+        if category_key != "numbers":
+            self.grid_tier_index = 0
+            self.grid_size = GRID_TIERS[0]
+        self.levels_completed_in_tier = max(0, min(int(saved.get("levels_completed_in_tier", 0)), LEVELS_PER_GRID_TIER - 1))
+
+    def save_mode_progress_for_player(self, player: Dict[str, object], category_key: str, mode_key: str) -> None:
+        progress = player.setdefault("mode_progress", {})
+        if not isinstance(progress, dict):
+            progress = {}
+            player["mode_progress"] = progress
+        progress[self.mode_progress_key(category_key, mode_key)] = {
+            "level_index": self.level_index,
+            "level": LEVELS[self.level_index]["level"],
+            "grid_tier_index": self.grid_tier_index if category_key == "numbers" else 0,
+            "grid_size": self.grid_size if category_key == "numbers" else GRID_TIERS[0],
+            "levels_completed_in_tier": self.levels_completed_in_tier if category_key == "numbers" else 0,
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
 
     def load_last_player(self) -> None:
         key = self.player_store.get("last_player_key", "")
@@ -933,6 +999,7 @@ class MemoryGameApp:
         self.best_score = int(player.get("lifetime", {}).get("best_score", 0))
         self.current_player_var.set(f"Current player: {player.get('name', '')}, age {player.get('age', '')}")
         self.on_mode_change()
+        self.refresh_stats_display()
 
     def calculate_accuracy(self, correct: int, total: int) -> int:
         return round((correct / total) * 100) if total else 0
@@ -940,13 +1007,116 @@ class MemoryGameApp:
     def format_seconds(self, ms: int) -> str:
         return f"{ms / 1000:.1f}s"
 
+    def calculate_progress_index_ms(self, total_time_ms: int, total_lapse_ms: int, correct_responses: int) -> Optional[float]:
+        if correct_responses <= 0:
+            return None
+        active_time_ms = max(total_time_ms - total_lapse_ms, 0)
+        return active_time_ms / correct_responses
+
+    def format_progress_index(self, progress_index_ms: Optional[float]) -> str:
+        if progress_index_ms is None:
+            return "N/A"
+        return f"{progress_index_ms / 1000:.1f}s/correct"
+
+    def format_duration_compact(self, ms: int) -> str:
+        seconds = max(ms, 0) / 1000
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        minutes = int(seconds // 60)
+        remaining = int(seconds % 60)
+        return f"{minutes}m {remaining:02d}s"
+
+    def get_continuous_lapse_durations(self, lapses: List[Dict[str, object]]) -> List[float]:
+        intervals = []
+        fallback_durations = []
+        for lapse in lapses:
+            duration_ms = int(lapse.get("duration_ms", 0))
+            if duration_ms <= 0:
+                continue
+            try:
+                start_struct = time.strptime(str(lapse.get("started_at", "")), "%Y-%m-%dT%H:%M:%S")
+                start_ms = int(time.mktime(start_struct) * 1000)
+                intervals.append((start_ms, start_ms + duration_ms))
+            except (TypeError, ValueError, OverflowError):
+                fallback_durations.append(duration_ms / 1000)
+
+        if not intervals:
+            return fallback_durations
+
+        intervals.sort()
+        merged = []
+        current_start, current_end = intervals[0]
+        for start_ms, end_ms in intervals[1:]:
+            if start_ms <= current_end + 1500:
+                current_end = max(current_end, end_ms)
+            else:
+                merged.append((current_start, current_end))
+                current_start, current_end = start_ms, end_ms
+        merged.append((current_start, current_end))
+
+        return [(end_ms - start_ms) / 1000 for start_ms, end_ms in merged] + fallback_durations
+
+    def summarize_sessions(self, sessions: List[Dict[str, object]]) -> Dict[str, object]:
+        total_sessions = len(sessions)
+        total_rounds = sum(int(session.get("rounds_played", 0)) for session in sessions)
+        total_correct = sum(int(session.get("rounds_correct", 0)) for session in sessions)
+        total_response_time = sum(int(session.get("total_response_time_ms", 0)) for session in sessions)
+        total_lapse_time = sum(int(session.get("total_lapse_duration_ms", 0)) for session in sessions)
+        total_game_time = sum(int(session.get("game_duration_ms", 0)) for session in sessions)
+        best_score = max((int(session.get("score", 0)) for session in sessions), default=0)
+        avg_response_ms = round(total_response_time / total_rounds) if total_rounds else 0
+        progress_index_ms = self.calculate_progress_index_ms(total_game_time, total_lapse_time, total_correct)
+        return {
+            "sessions": total_sessions,
+            "rounds": total_rounds,
+            "correct": total_correct,
+            "accuracy": self.calculate_accuracy(total_correct, total_rounds),
+            "best_score": best_score,
+            "avg_response_ms": avg_response_ms,
+            "total_lapse_ms": total_lapse_time,
+            "progress_index_ms": progress_index_ms,
+        }
+
+    def format_metric_summary_line(self, label: str, summary: Dict[str, object]) -> str:
+        return (
+            f"{label}: "
+            f"Sessions Played: {summary['sessions']}  |  "
+            f"Total Rounds: {summary['rounds']}  |  "
+            f"Overall Accuracy: {summary['accuracy']}%  |  "
+            f"Best Score: {summary['best_score']}  |  "
+            f"Avg Response: {self.format_seconds(int(summary['avg_response_ms']))}  |  "
+            f"Total Lapse Time: {self.format_duration_compact(int(summary['total_lapse_ms']))}  |  "
+            f"Progress Index: {self.format_progress_index(summary['progress_index_ms'])}"
+        )
+
+    def refresh_post_game_summary(self) -> None:
+        if not self.active_player:
+            self.post_game_summary_var.set("")
+            return
+        sessions = list(self.active_player.get("sessions", []))
+        if not sessions:
+            self.post_game_summary_var.set("")
+            return
+        today = time.strftime("%Y-%m-%d")
+        today_sessions = [
+            session for session in sessions
+            if str(session.get("ended_at") or session.get("started_at", "")).startswith(today)
+        ]
+        today_summary = self.summarize_sessions(today_sessions)
+        overall_summary = self.summarize_sessions(sessions)
+        self.post_game_summary_var.set(
+            "Latest Results\n"
+            f"{self.format_metric_summary_line('Today', today_summary)}\n"
+            f"{self.format_metric_summary_line('Overall', overall_summary)}"
+        )
+
     def refresh_stats_display(self) -> None:
         if self.started:
             current_level = LEVELS[self.level_index]["level"]
         else:
             current_level = int(self.current_session.get("highest_level_reached", 1))
 
-        # Show level with grid info for numbers mode
+        # Show level with grid info for the Grid category.
         is_objects = self.game_category_var.get() == "objects"
         if not is_objects and self.grid_size > 3 and self.started:
             self.level_value_var.set(f"{current_level} ({self.grid_size}×{self.grid_size})")
@@ -958,37 +1128,29 @@ class MemoryGameApp:
         self.stars_var.set(str(self.stars))
         self.lives_var.set(" ".join("❤" if i < self.lives else "♡" for i in range(3)))
 
-        session_accuracy = self.calculate_accuracy(
-            int(self.current_session["rounds_correct"]),
-            int(self.current_session["rounds_played"]),
-        )
-        self.session_accuracy_var.set(f"{session_accuracy}%")
-
         if self.active_player:
-            lifetime = self.active_player.get("lifetime", {})
-            lifetime_accuracy = self.calculate_accuracy(
-                int(lifetime.get("rounds_correct", 0)),
-                int(lifetime.get("rounds_played", 0)),
-            )
-            self.lifetime_accuracy_var.set(f"{lifetime_accuracy}%")
+            overall_summary = self.summarize_sessions(list(self.active_player.get("sessions", [])))
+            self.all_time_sessions_var.set(str(overall_summary["sessions"]))
+            self.all_time_rounds_var.set(str(overall_summary["rounds"]))
+            self.lifetime_accuracy_var.set(f"{overall_summary['accuracy']}%")
+            self.all_time_best_score_var.set(str(overall_summary["best_score"]))
+            self.avg_response_var.set(self.format_seconds(int(overall_summary["avg_response_ms"])))
+            self.lapse_total_var.set(self.format_duration_compact(int(overall_summary["total_lapse_ms"])))
+            self.progress_index_var.set(self.format_progress_index(overall_summary["progress_index_ms"]))
         else:
+            self.all_time_sessions_var.set("0")
+            self.all_time_rounds_var.set("0")
             self.lifetime_accuracy_var.set("0%")
-
-        response_times = self.current_session["response_times_ms"]
-        avg_response = round(sum(response_times) / len(response_times)) if response_times else 0
-        self.avg_response_var.set(self.format_seconds(avg_response))
-        self.lapse_count_var.set(str(self.current_session["lapse_count"]))
-        self.lapse_total_var.set(self.format_seconds(int(self.current_session["total_lapse_duration_ms"])))
-        avg_lapse = round(
-            int(self.current_session["total_lapse_duration_ms"]) / int(self.current_session["lapse_count"])
-        ) if int(self.current_session["lapse_count"]) else 0
-        self.avg_lapse_var.set(self.format_seconds(avg_lapse))
+            self.all_time_best_score_var.set("0")
+            self.avg_response_var.set("0.0s")
+            self.lapse_total_var.set("0.0s")
+            self.progress_index_var.set("N/A")
         self.on_mode_change()
 
     def record_app_activity(self, _event=None) -> None:
         now_ms = int(time.time() * 1000)
         if self.current_idle_lapse_start_ms is not None:
-            duration_ms = min(now_ms - self.current_idle_lapse_start_ms, LAPSE_MAX_DURATION_MS)
+            duration_ms = now_ms - self.current_idle_lapse_start_ms
             self.record_lapse(self.current_idle_lapse_start_ms, duration_ms, "no_input_idle")
             self.current_idle_lapse_start_ms = None
         self.last_app_activity_ms = now_ms
@@ -1011,13 +1173,6 @@ class MemoryGameApp:
 
         if idle_ms >= LAPSE_THRESHOLD_MS and self.current_idle_lapse_start_ms is None:
             self.current_idle_lapse_start_ms = self.last_app_activity_ms
-
-        if self.current_idle_lapse_start_ms is not None:
-            elapsed_since_lapse_start = now_ms - self.current_idle_lapse_start_ms
-            if elapsed_since_lapse_start >= LAPSE_MAX_DURATION_MS:
-                self.record_lapse(self.current_idle_lapse_start_ms, LAPSE_MAX_DURATION_MS, "no_input_idle")
-                self.current_idle_lapse_start_ms = now_ms
-                self.last_app_activity_ms = now_ms
 
         self.global_lapse_watch_job = self.root.after(500, self.check_global_idle_lapse)
 
@@ -1050,6 +1205,7 @@ class MemoryGameApp:
             players[key]["name"] = name
             players[key]["age"] = age
             players[key]["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            players[key].setdefault("mode_progress", {})
 
         self.player_store["last_player_key"] = key
         self.active_player_key = key
@@ -1058,7 +1214,6 @@ class MemoryGameApp:
 
         self.started = True
         self.phase = "idle"
-        self.level_index = 1  # Start from level 2
         self.score = 0
         self.stars = 0
         self.lives = 3
@@ -1070,10 +1225,7 @@ class MemoryGameApp:
         self.recovery_mode = False
         self.recovery_target_level = 0
 
-        # Grid expansion reset (numbers mode only)
-        self.grid_tier_index = 0
-        self.grid_size = GRID_TIERS[0]
-        self.levels_completed_in_tier = 0
+        self.apply_saved_mode_progress(self.active_player, cat_key, mode_key)
         if cat_key == "numbers":
             self.rebuild_grid_buttons()
 
@@ -1084,6 +1236,7 @@ class MemoryGameApp:
 
         self.feedback_var.set("")
         self.current_submode_var.set("")
+        self.post_game_summary_var.set("")
 
         # Mixed mode: pick first sub-mode
         if mode_key == "mixed":
@@ -1098,6 +1251,7 @@ class MemoryGameApp:
         self.current_session["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         self.current_session["mode"] = mode_key
         self.current_session["category"] = cat_key
+        self.current_session["starting_level"] = LEVELS[self.level_index]["level"]
         self.current_session["highest_level_reached"] = LEVELS[self.level_index]["level"]
         self.pending_persisted = False
         self.session_start_ms = int(time.time() * 1000)
@@ -1178,7 +1332,7 @@ class MemoryGameApp:
             self.letter_assignments = {}
 
         # Build message
-        item_word = "object(s)" if is_objects else "box(es)"
+        item_word = "object(s)" if is_objects else "cell(s)"
         effective = self.get_effective_mode()
         effective_label = GAME_MODES.get(effective, effective)
         trial_info = f" (Trial {self.consecutive_correct + 1}/{TRIALS_TO_RECOVER if self.recovery_mode else TRIALS_TO_ADVANCE})"
@@ -1294,7 +1448,7 @@ class MemoryGameApp:
 
             if rot_degrees > 0:
                 self.phase = "rotate_pause"
-                item_word = "objects" if is_objects else "boxes"
+                item_word = "objects" if is_objects else "cells"
                 def do_rotate_then_input():
                     self.animate_grid_rotation(rot_degrees, item_word)
                 self.next_round_job = self.root.after(extra_delay, do_rotate_then_input)
@@ -1306,7 +1460,7 @@ class MemoryGameApp:
             return
 
         number = self.sequence[index]
-        self.highlight_single_number(number)
+        self.highlight_single_cell(number)
 
         # In letter modes, also show the letter on the button briefly
         if self.is_letter_mode() and number in self.letter_assignments:
@@ -1324,7 +1478,7 @@ class MemoryGameApp:
         self.round_input_start_ms = int(time.time() * 1000)
 
         is_objects = self.game_category_var.get() == "objects"
-        item_word = "objects" if is_objects else "boxes"
+        item_word = "objects" if is_objects else "cells"
         effective = self.get_effective_mode()
 
         if self.is_letter_mode():
@@ -1356,7 +1510,7 @@ class MemoryGameApp:
         gap_ms = int(LEVELS[self.level_index]["gap_ms"])
         self.show_job = self.root.after(gap_ms, lambda: self.show_sequence_step(index + 1))
 
-    def highlight_single_number(self, number: int) -> None:
+    def highlight_single_cell(self, number: int) -> None:
         self.refresh_grid_appearance()
         btn = self.number_buttons.get(number)
         if not btn:
@@ -1417,7 +1571,7 @@ class MemoryGameApp:
                 # All cells and letters correct
                 self.evaluate_attempt(self.selected[:])
             else:
-                self.message_text.set(f"✓ Correct letter! Now click the next box. ({self.letter_step_index + 1}/{len(expected_seq)})")
+                self.message_text.set(f"✓ Correct letter! Now click the next cell. ({self.letter_step_index + 1}/{len(expected_seq)})")
         else:
             # Wrong letter — immediately fail the attempt
             self.selected.append(-1)  # Mark as wrong
@@ -1454,7 +1608,7 @@ class MemoryGameApp:
             self.waiting_for_letter = True
             self.letter_step_index = step_index
             expected_cell = expected_seq[step_index]
-            self.message_text.set(f"Good! Now type the letter for this box. ({step_index + 1}/{len(expected_seq)})")
+            self.message_text.set(f"Good! Now type the letter for this cell. ({step_index + 1}/{len(expected_seq)})")
             return
 
         # Check if all cells selected
@@ -1576,7 +1730,7 @@ class MemoryGameApp:
                             LEVELS[self.level_index]["level"],
                         )
 
-                        # Check grid expansion (numbers mode only)
+                        # Check grid expansion for the Grid category.
                         if not is_objects and self.levels_completed_in_tier >= LEVELS_PER_GRID_TIER:
                             if self.grid_tier_index < len(GRID_TIERS) - 1:
                                 self.next_round_job = self.root.after(1500, self._do_grid_expand)
@@ -1609,7 +1763,7 @@ class MemoryGameApp:
                 f"Mistake on trial {trial_position}. Restarting level {current_level_number}."
             )
             self.show_popup_message(
-                f"Incorrect sequence.\n\nReason: You clicked the wrong box.\nNext step: Restarting level {current_level_number}.",
+                f"Incorrect sequence.\n\nReason: You clicked the wrong cell.\nNext step: Restarting level {current_level_number}.",
                 "#d9534f"
             )
         else:
@@ -1633,7 +1787,7 @@ class MemoryGameApp:
                 f"Get {TRIALS_TO_RECOVER} correct to recover."
             )
             self.show_popup_message(
-                f"Incorrect sequence.\n\nReason: You clicked the wrong box.\nNext step: Dropped to level {demoted_level}.\nComplete {TRIALS_TO_RECOVER} correct trials to recover.",
+                f"Incorrect sequence.\n\nReason: You clicked the wrong cell.\nNext step: Dropped to level {demoted_level}.\nComplete {TRIALS_TO_RECOVER} correct trials to recover.",
                 "#d9534f"
             )
 
@@ -1651,6 +1805,11 @@ class MemoryGameApp:
     def finish_game(self) -> None:
         if self.pending_persisted:
             return
+        if self.current_idle_lapse_start_ms is not None:
+            now_ms = int(time.time() * 1000)
+            duration_ms = now_ms - self.current_idle_lapse_start_ms
+            self.record_lapse(self.current_idle_lapse_start_ms, duration_ms, "no_input_idle")
+            self.current_idle_lapse_start_ms = None
         if self.session_start_ms is not None:
             self.current_session["game_duration_ms"] = int(time.time() * 1000) - self.session_start_ms
 
@@ -1676,6 +1835,10 @@ class MemoryGameApp:
             bg = "#ffffff"
             active_bg = "#dceffd"
             fg = "#243447"
+
+            # Clear text for non-objects mode if not selected to remove old letters
+            if cat != "objects" and number not in self.selected:
+                button.configure(text="")
 
             if number in self.selected:
                 bg = "#ffcc80"
@@ -1719,6 +1882,11 @@ class MemoryGameApp:
         total_lapse_duration = int(self.current_session["total_lapse_duration_ms"])
         avg_lapse_duration = round(total_lapse_duration / lapse_count) if lapse_count else 0
         longest_lapse = int(self.current_session["longest_lapse_ms"])
+        game_duration = int(self.current_session.get("game_duration_ms", 0))
+        progress_index_ms = self.calculate_progress_index_ms(game_duration, total_lapse_duration, rounds_correct)
+        mode_key = str(self.current_session.get("mode", "normal"))
+        category_key = str(self.current_session.get("category", "numbers"))
+        stopped_level = LEVELS[self.level_index]["level"]
 
         session_entry = {
             "started_at": self.current_session["started_at"],
@@ -1733,22 +1901,29 @@ class MemoryGameApp:
             "total_lapse_duration_ms": total_lapse_duration,
             "average_lapse_duration_ms": avg_lapse_duration,
             "longest_lapse_ms": longest_lapse,
+            "progress_index_ms": progress_index_ms,
             "lapses": list(self.current_session["lapses"]),
             "level_history": list(self.current_session["level_history"]),
-            "game_duration_ms": int(self.current_session.get("game_duration_ms", 0)),
-            "mode": self.current_session.get("mode", "normal"),
-            "mode_label": GAME_MODES.get(self.current_session.get("mode", "normal"), "Normal"),
-            "category": self.current_session.get("category", "numbers"),
-            "category_label": GAME_CATEGORIES.get(self.current_session.get("category", "numbers"), "Grid"),
+            "game_duration_ms": game_duration,
+            "mode": mode_key,
+            "mode_label": GAME_MODES.get(mode_key, "Normal"),
+            "category": category_key,
+            "category_label": GAME_CATEGORIES.get(category_key, "Grid"),
+            "starting_level": int(self.current_session.get("starting_level", stopped_level)),
+            "stopped_level": stopped_level,
+            "stopped_level_index": self.level_index,
+            "stopped_grid_size": self.grid_size,
             "highest_level_reached": int(self.current_session.get("highest_level_reached", 1)),
         }
 
         lifetime = player.setdefault("lifetime", {})
+        self.save_mode_progress_for_player(player, category_key, mode_key)
         lifetime["rounds_played"] = int(lifetime.get("rounds_played", 0)) + rounds_played
         lifetime["rounds_correct"] = int(lifetime.get("rounds_correct", 0)) + rounds_correct
         lifetime["total_response_time_ms"] = int(lifetime.get("total_response_time_ms", 0)) + total_response_time
         lifetime["total_lapse_count"] = int(lifetime.get("total_lapse_count", 0)) + lapse_count
         lifetime["total_lapse_duration_ms"] = int(lifetime.get("total_lapse_duration_ms", 0)) + total_lapse_duration
+        lifetime["total_game_duration_ms"] = int(lifetime.get("total_game_duration_ms", 0)) + game_duration
         lifetime["longest_lapse_ms"] = max(int(lifetime.get("longest_lapse_ms", 0)), longest_lapse)
         lifetime["sessions_played"] = int(lifetime.get("sessions_played", 0)) + 1
         lifetime["best_score"] = max(int(lifetime.get("best_score", 0)), final_score)
@@ -1760,6 +1935,11 @@ class MemoryGameApp:
             round(int(lifetime["total_lapse_duration_ms"]) / int(lifetime["total_lapse_count"]))
             if int(lifetime["total_lapse_count"]) else 0
         )
+        lifetime["progress_index_ms"] = self.calculate_progress_index_ms(
+            int(lifetime.get("total_game_duration_ms", 0)),
+            int(lifetime.get("total_lapse_duration_ms", 0)),
+            int(lifetime.get("rounds_correct", 0)),
+        )
 
         player.setdefault("sessions", []).append(session_entry)
         player["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -1770,6 +1950,7 @@ class MemoryGameApp:
         self.best_score = int(lifetime["best_score"])
         self.save_store()
         self.refresh_stats_display()
+        self.refresh_post_game_summary()
 
     def open_results_with_password(self) -> None:
         password = simpledialog.askstring("Results password", "Enter password to open results:", show="*")
@@ -1809,7 +1990,7 @@ class MemoryGameApp:
         title_label = tk.Label(header, font=("Arial", 18, "bold"), bg="#ffffff", fg="#243447")
         title_label.pack(anchor="w")
         
-        stats_label = tk.Label(header, font=("Arial", 11), bg="#ffffff", fg="#4b5d73")
+        stats_label = tk.Label(header, font=("Arial", 11), bg="#ffffff", fg="#4b5d73", wraplength=1150, justify="left")
         stats_label.pack(anchor="w", pady=(4, 0))
 
         plot_container = tk.Frame(result_window, bg="#ffffff")
@@ -1838,25 +2019,19 @@ class MemoryGameApp:
             player_data = players_db[p_key]
             
             sessions = player_data.get("sessions", [])
-            lifetime = player_data.get("lifetime", {})
             
             title_label.config(text=f"Lifetime Results for {player_data.get('name', 'Unknown')} (Age {player_data.get('age', '?')})")
             
-            total_sessions = len(sessions)
-            total_rounds = int(lifetime.get('rounds_played', 0))
-            total_correct = int(lifetime.get('rounds_correct', 0))
-            accuracy = round(100 * total_correct / total_rounds) if total_rounds else 0
-            best_score = int(lifetime.get('best_score', 0))
-            avg_resp = round(int(lifetime.get('total_response_time_ms', 0)) / total_rounds / 1000, 1) if total_rounds else 0
-            total_lapses = int(lifetime.get('total_lapse_count', 0))
+            overall_summary = self.summarize_sessions(sessions)
             
             stats_label.config(text=(
-                f"Sessions Played: {total_sessions}   |   "
-                f"Total Rounds: {total_rounds}   |   "
-                f"Overall Accuracy: {accuracy}%   |   "
-                f"Best Score: {best_score}   |   "
-                f"Lifetime Avg Response: {avg_resp}s   |   "
-                f"Total Lapses: {total_lapses}"
+                f"Sessions Played: {overall_summary['sessions']}   |   "
+                f"Total Rounds: {overall_summary['rounds']}   |   "
+                f"Overall Accuracy: {overall_summary['accuracy']}%   |   "
+                f"Best Score: {overall_summary['best_score']}   |   "
+                f"Lifetime Avg Response: {self.format_seconds(int(overall_summary['avg_response_ms']))}   |   "
+                f"Total Lapse Time: {self.format_duration_compact(int(overall_summary['total_lapse_ms']))}   |   "
+                f"Progress Index: {self.format_progress_index(overall_summary['progress_index_ms'])}"
             ))
 
             for ax in (ax1, ax2, ax3, ax4, ax5, ax6):
@@ -1904,7 +2079,7 @@ class MemoryGameApp:
                 for lvl in summary_levels
             ]
 
-            lapse_durations = [entry.get("duration_ms", 0) / 1000 for entry in all_lapses]
+            lapse_durations = self.get_continuous_lapse_durations(all_lapses)
 
             if rounds:
                 ax1.plot(rounds, response_secs, marker=".", markersize=5, linestyle="-", linewidth=1, color="#2c7fb8")
@@ -1935,10 +2110,19 @@ class MemoryGameApp:
                 ax4.set_xticks(sessions_played)
                 
                 if lapse_durations:
-                    bars5 = ax5.bar(list(range(1, len(lapse_durations) + 1)), lapse_durations, color="#e6550d", width=0.5)
-                    ax5.set_title(f"Attention Lapses (Total: {len(lapse_durations)})", fontsize=10)
+                    lapse_indexes = list(range(1, len(lapse_durations) + 1))
+                    total_lapse_ms = sum(int(entry.get("duration_ms", 0)) for entry in all_lapses)
+                    bar_width = 0.8 if len(lapse_durations) <= 40 else 0.55
+                    bars5 = ax5.bar(lapse_indexes, lapse_durations, color="#e6550d", width=bar_width)
+                    ax5.set_title(
+                        f"Attention Lapses (Total Time: {self.format_duration_compact(total_lapse_ms)})",
+                        fontsize=10,
+                    )
                     ax5.set_xlabel("Lapse Event Index", fontsize=9)
                     ax5.set_ylabel("Duration (Secs)", fontsize=9)
+                    ax5.set_xlim(0.5, len(lapse_durations) + 0.5)
+                    max_lapse_duration = max(lapse_durations)
+                    ax5.set_ylim(0, max_lapse_duration if max_lapse_duration else 1)
                     ax5.grid(True, axis='y', linestyle="--", alpha=0.4)
                 else:
                     ax5.text(0.5, 0.5, "No lapses recorded\nExcellent focus!", ha="center", va="center", color="#31a354", fontsize=11, fontweight='bold')
@@ -2001,7 +2185,7 @@ class MemoryGameApp:
     def reset_game(self) -> None:
         if self.current_idle_lapse_start_ms is not None:
             now_ms = int(time.time() * 1000)
-            duration_ms = min(now_ms - self.current_idle_lapse_start_ms, LAPSE_MAX_DURATION_MS)
+            duration_ms = now_ms - self.current_idle_lapse_start_ms
             self.record_lapse(self.current_idle_lapse_start_ms, duration_ms, "no_input_idle")
             self.current_idle_lapse_start_ms = None
 
@@ -2046,7 +2230,8 @@ class MemoryGameApp:
 
         self.reset_grid_rotation()
         self.timer_text.set("")
-        self.message_text.set("Enter player details, choose a game type, and click Start Game.")
+        self.message_text.set("Enter player details, choose a category and game type, then click Start Game.")
+        self.post_game_summary_var.set("")
         self.current_session = self.empty_session_stats()
         self.refresh_grid_appearance()
         self.refresh_stats_display()
@@ -2070,7 +2255,7 @@ class MemoryGameApp:
     def on_close(self) -> None:
         if self.current_idle_lapse_start_ms is not None:
             now_ms = int(time.time() * 1000)
-            duration_ms = min(now_ms - self.current_idle_lapse_start_ms, LAPSE_MAX_DURATION_MS)
+            duration_ms = now_ms - self.current_idle_lapse_start_ms
             self.record_lapse(self.current_idle_lapse_start_ms, duration_ms, "no_input_idle")
             self.current_idle_lapse_start_ms = None
 
